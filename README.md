@@ -1,1 +1,2 @@
-# pipenv
+# pipenv 
+manual install
