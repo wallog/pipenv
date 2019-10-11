@@ -1,0 +1,82 @@
+from typing import Generator
+import re
+import os
+import sys
+from collections import defaultdict, Counter
+import time
+import psutil
+from multiprocessing import Process, Queue, Manager, cpu_count
+
+class readError(Exception):
+    pass
+
+def getTimes(func):
+    def wrapper(*args, **kwargs):
+        stime = int(time.time())
+        func(*args, **kwargs)
+        etime = int(time.time())
+        name = func.__name__
+        print(f"{name} runtime : {etime - stime}s")
+    return wrapper
+
+_cpuCount = cpu_count()
+fileblocksize = int(os.stat('').st_size / 1024 / (_cpuCount * 50))
+def getObject(pf, block:int=1024*1024) -> Generator:
+    while True:
+        chunk = pf.read(block)
+        if not chunk:
+            break
+        yield chunk
+
+def genWordDict(block) -> dict:
+    pattern = re.compile(r'(\w+\b)')
+    tmpdict = defaultdict(int)
+    for letter in pattern.finditer(block):
+        tmpdict[letter.group()] += 1
+    return tmpdict
+
+def putDictQueueList(queuelist:list, filename:str) -> None:
+    with open(filename, 'r') as f:
+        for q in queuelist:
+            for block in getObject(f):
+                if not q.full():
+                    q.put(block)
+                else:
+                    break
+
+def readblocklast(q, l:list) -> None:
+    while 1:
+        if q.empty():
+           break
+        value = q.get(True)
+        d = Counter(genWordDict(value))
+        l.append(d.most_common(10))
+
+def queueList(qlen:int=50, qsize:int=40) -> list:
+    ql = [Queue(qsize) for _ in range(qlen-1)]
+    ql.append(Queue())
+    return ql
+
+if __name__ == '__main__':
+    with Manager() as manager:
+        l = manager.list()
+        myq = queueList()
+        filename = sys.argv[1]
+        pw = Process(target=putDictQueueList, args=(myq, filename))
+        pw.start()
+        pw.join(5)
+        print("start....")
+        st = int(time.time())
+        tmplist = []
+        for q in myq:
+            _ = Process(target=readblocklast, name=q.qsize(), args=(q,l))
+            _.start()
+            tmplist.append(_)
+        else:
+            [_.join() for _ in tmplist]
+        et = int(time.time())
+        print(f"running time: {et - st}s")
+        tmpdict = Counter()
+        for n in l:
+            tmpdict.update({x[0]:x[1] for x in n})
+        print(tmpdict.most_common(10))
